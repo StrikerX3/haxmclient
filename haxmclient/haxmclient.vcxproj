@@ -132,9 +132,11 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="haxm.cpp" />
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="haxm.h" />
     <ClInclude Include="include\hax_interface.h" />
     <ClInclude Include="include\hax_types.h" />
     <ClInclude Include="include\vcpu_state.h" />

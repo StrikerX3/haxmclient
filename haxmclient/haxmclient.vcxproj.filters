@@ -13,21 +13,30 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Header Files\HAXM">
+      <UniqueIdentifier>{70438ac0-f7c0-4cd4-b428-32c39cd2edf1}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="haxm.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="include\hax_interface.h">
+    <ClInclude Include="haxm.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\hax_interface.h">
+      <Filter>Header Files\HAXM</Filter>
     </ClInclude>
     <ClInclude Include="include\hax_types.h">
-      <Filter>Header Files</Filter>
+      <Filter>Header Files\HAXM</Filter>
     </ClInclude>
     <ClInclude Include="include\vcpu_state.h">
-      <Filter>Header Files</Filter>
+      <Filter>Header Files\HAXM</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>
