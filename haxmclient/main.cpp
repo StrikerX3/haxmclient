@@ -25,6 +25,8 @@ void printFPURegs(struct fx_layout *fpu) {
 	}
 }
 
+#define DO_MANUAL_JMP
+
 int main() {
 	// Allocate memory for the RAM and ROM
 	const uint32_t ramSize = 256 * 4096; // 1 MB
@@ -42,11 +44,51 @@ int main() {
 
 	// Write a simple program to ROM
 	{
-		uint32_t addr = 0xfff0;
+		uint32_t addr;
 		#define emit(buf, code) {memcpy(&buf[addr], code, sizeof(code) - 1); addr += sizeof(code) - 1;}
-		emit(rom, "\x01\xcb");   // add   bx, cx
-		emit(rom, "\x31\xc9");   // xor   cx, cx
-		emit(rom, "\xf4");       // hlt
+		
+		// Jump to initialization code and define GDT/IDT table pointer
+		addr = 0xfff0;
+		emit(rom, "\xeb\xc6");                         // [0xfff0] jmp    short 0x1b8
+		emit(rom, "\x18\x00\xd8\xff\xff\xff");         // [0xfff2] GDT pointer: 0xffffffd8:0x0018
+		
+		// GDT/IDT talbe
+		addr = 0xffd8;
+		emit(rom, "\x00\x00\x00\x00\x00\x00\x00\x00"); // [0xffd8] GDT entry 0: null
+		emit(rom, "\xff\xff\x00\x00\x00\x9b\xcf\x00"); // [0xffe0] GDT entry 1: code
+		emit(rom, "\xff\xff\x00\x00\x00\x93\xcf\x00"); // [0xffe8] GDT entry 2: data
+
+		// Load GDT/IDT tables
+		addr = 0xffb8;
+		emit(rom, "\x66\x2e\x0f\x01\x16\xf2\xff");     // [0xffb8] lgdt   [cs:0xfff2]
+		emit(rom, "\x66\x2e\x0f\x01\x1e\xf2\xff");     // [0xffbf] lidt   [cs:0xfff2]
+
+		// Enter protected mode
+		emit(rom, "\x0f\x20\xc0");                     // [0xffc6] mov    eax, cr0
+		emit(rom, "\x0c\x01");                         // [0xffc9] or      al, 1
+		emit(rom, "\x0f\x22\xc0");                     // [0xffcb] mov    cr0, eax
+		#ifdef DO_MANUAL_JMP
+		emit(rom, "\xf4")                              // [0xffce] hlt
+		#else
+		emit(rom, "\x66\xea\x00\xff\xff\xff\x08\x00"); // [0xffce] jmp    dword 0x8:0xffffff00
+		#endif
+		
+		// Load segment registers
+		addr = 0xff00;
+		emit(rom, "\x33\xc0");                         // [0xff00] xor    eax, eax
+		emit(rom, "\xb0\x10");                         // [0xff02] mov     al, 0x10
+		emit(rom, "\x8e\xd8");                         // [0xff04] mov     ds, eax
+		emit(rom, "\x8e\xc0");                         // [0xff06] mov     es, eax
+		emit(rom, "\x8e\xd0");                         // [0xff08] mov     ss, eax
+
+		// Do some simple things in protected mode
+		emit(rom, "\xbb\x78\x56\x34\x12");             // [0xff0a] mov    ebx, 0x12345678
+		emit(rom, "\xba\x33\x33\x33\x33");             // [0xff0f] mov    edx, 0x33333333
+		emit(rom, "\x01\xd3");                         // [0xff14] add    ebx, edx
+		emit(rom, "\x01\xcb");                         // [0xff16] add    ebx, ecx
+		emit(rom, "\x31\xc9");                         // [0xff18] xor    ecx, ecx
+		emit(rom, "\xf4");                             // [0xff1a] hlt
+
 		#undef emit
 	}
 
@@ -144,7 +186,7 @@ int main() {
 
 	printf("  VCPU created with ID %d\n", vcpu->ID());
 	printf("    VCPU Tunnel allocated at 0x%016llx\n", (uint64_t)vcpu->Tunnel());
-	printf("    VCPU I/O tunnel allocated at 0x%016llx with %d bytes\n", (uint64_t)vcpu->IOTunnel(), vcpu->IOTunnelSize());
+	printf("    VCPU I/O tunnel allocated at 0x%016llx\n", (uint64_t)vcpu->IOTunnel());
 	printf("\n");
 
 	// Get CPU registers
@@ -167,8 +209,7 @@ int main() {
 	printf("\n");
 
 	// Manipulate CPU registers
-	regs._bx = 0x1234;
-	regs._cx = 0x8765;
+	regs._cx = 0x4321;
 	vcpuStatus = vcpu->SetRegisters(&regs);
 	switch (vcpuStatus) {
 	case HXVCPUS_FAILED: printf("Failed to set VCPU registers: %d\n", vcpu->GetLastError()); return -1;
@@ -184,6 +225,40 @@ int main() {
 
 	// Run the CPU!
 	vcpu->Run();
+
+	#ifdef DO_MANUAL_JMP
+	// Do the jmp dword 0x8:0xffffff00 manually
+	vcpu->GetRegisters(&regs);
+
+	// Set basic register data
+	regs._cs.selector = 0x0008;
+	regs._eip = 0xffffff00;
+
+	// Find GDT entry in memory
+	uint64_t gdtEntry;
+	if (regs._gdt.base >= ramBase && regs._gdt.base <= ramBase + ramSize - 1) {
+		// GDT is in RAM
+		gdtEntry = *(uint64_t *)&ram[regs._gdt.base - ramBase + regs._cs.selector];
+	}
+	else if (regs._gdt.base >= romBase && regs._gdt.base <= romBase + romSize - 1) {
+		// GDT is in ROM
+		gdtEntry = *(uint64_t *)&rom[regs._gdt.base - romBase + regs._cs.selector];
+	}
+
+	// Fill in the rest of the CS info with data from the GDT entry
+	regs._cs.ar = ((gdtEntry >> 40) & 0xf0ff);
+	regs._cs.base = ((gdtEntry >> 16) & 0xfffff) | (((gdtEntry >> 56) & 0xff) << 20);
+	regs._cs.limit = ((gdtEntry & 0xffff) | (((gdtEntry >> 48) & 0xf) << 16));
+	if (regs._cs.ar & 0x8000) {
+		// 4 KB pages
+		regs._cs.limit = (regs._cs.limit << 12) | 0xfff;
+	}
+
+	vcpu->SetRegisters(&regs);
+
+	// Run the CPU again!
+	vcpu->Run();
+	#endif
 
 	// Get CPU status
 	auto tunnel = vcpu->Tunnel();
@@ -208,9 +283,9 @@ int main() {
 	case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
 	}
 
-	if (regs._eip == 0xfff5 && regs._cs.selector == 0xf000) {
+	if (regs._eip == 0xffffff1b && regs._cs.selector == 0x0008) {
 		printf("Emulation stopped at the right place!\n");
-		if (regs._bx == 0x1234 + 0x8765 && regs._cx == 0x0000) {
+		if (regs._ebx == 0x4567cccc && regs._ecx == 0x00000000 && regs._edx == 0x33333333) {
 			printf("And we got the right result!\n");
 		}
 	}

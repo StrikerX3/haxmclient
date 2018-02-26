@@ -416,7 +416,6 @@ HaxmVCPUStatus HaxmVCPU::Initialize() {
 
 	m_tunnel = (struct hax_tunnel *)(intptr_t)tunnelInfo.va;
 	m_ioTunnel = (unsigned char *)(intptr_t)tunnelInfo.io_va;
-	m_ioTunnelSize = tunnelInfo.size;
 
 	return HXVCPUS_SUCCESS;
 }
@@ -518,7 +517,7 @@ HaxmVCPUStatus HaxmVCPU::SetMSRs(struct hax_msr_data *msrData) {
 	bResult = DeviceIoControl(m_hVCPU,
 		HAX_VCPU_IOCTL_SET_MSRS,
 		msrData, sizeof(struct hax_msr_data),
-		NULL, 0,
+		msrData, sizeof(struct hax_msr_data),
 		&returnSize,
 		(LPOVERLAPPED)NULL);
 	if (!bResult) {
