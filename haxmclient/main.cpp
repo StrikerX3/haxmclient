@@ -53,7 +53,7 @@ int main() {
 		emit(rom, "\xeb\xc6");                         // [0xfff0] jmp    short 0x1b8
 		emit(rom, "\x18\x00\xd8\xff\xff\xff");         // [0xfff2] GDT pointer: 0xffffffd8:0x0018
 		
-		// GDT/IDT talbe
+		// GDT/IDT table
 		addr = 0xffd8;
 		emit(rom, "\x00\x00\x00\x00\x00\x00\x00\x00"); // [0xffd8] GDT entry 0: null
 		emit(rom, "\xff\xff\x00\x00\x00\x9b\xcf\x00"); // [0xffe0] GDT entry 1: code (full access to 4 GB linear space)
