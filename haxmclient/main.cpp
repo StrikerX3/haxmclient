@@ -44,11 +44,15 @@ int main() {
 	rom = (char *)_aligned_malloc(romSize, 0x1000);
 	memset(rom, 0xf4, romSize);
 
-	// Write a simple program to ROM
+	// Write initialization code to ROM and a simple program to RAM
 	{
 		uint32_t addr;
 		#define emit(buf, code) {memcpy(&buf[addr], code, sizeof(code) - 1); addr += sizeof(code) - 1;}
 		
+		// --- Start of ROM code ----------------------------------------------------------------------------------------------
+
+		// --- 16-bit real mode -----------------------------------------------------------------------------------------------
+
 		// Jump to initialization code and define GDT/IDT table pointer
 		addr = 0xfff0;
 		#ifdef DO_MANUAL_INIT
@@ -79,6 +83,8 @@ int main() {
 		#else
 		emit(rom, "\x66\xea\x00\xff\xff\xff\x08\x00"); // [0xffce] jmp    dword 0x8:0xffffff00
 		#endif
+
+		// --- 32-bit protected mode ------------------------------------------------------------------------------------------
 		
 		// Prepare memory for paging
 		// (based on https://github.com/unicorn-engine/unicorn/blob/master/tests/unit/test_x86_soft_paging.c)
@@ -90,7 +96,12 @@ int main() {
 
 		// Load segment registers
 		addr = 0xff00;
+		#ifdef DO_MANUAL_PAGING
+		emit(rom, "\xf4");                             // [0xff00] hlt
+		emit(rom, "\x90");                             // [0xff01] nop
+		#else
 		emit(rom, "\x33\xc0");                         // [0xff00] xor    eax, eax
+		#endif
 		emit(rom, "\xb0\x10");                         // [0xff02] mov     al, 0x10
 		emit(rom, "\x8e\xd8");                         // [0xff04] mov     ds, eax
 		emit(rom, "\x8e\xc0");                         // [0xff06] mov     es, eax
@@ -157,14 +168,22 @@ int main() {
 		emit(rom, "\xbe\x00\x00\x00\x10");             // [0xff97] mov    esi, 0x10000000
 		emit(rom, "\x8b\x06");                         // [0xff9c] mov    eax, [esi]
 
-		// Stop
+		// First stop
 		emit(rom, "\xf4");                             // [0xff9e] hlt
+		
+		// Jump to RAM
+		emit(rom, "\xe9\x60\x00\x00\x10");             // [0xff9f] jmp    0x10000004
 
-		#ifdef DO_MANUAL_PAGING
-		// Set a HLT at the start of the 32-bit code
-		addr = 0xff00;
-		emit(rom, "\xf4");
-		#endif	
+		// --- End of ROM code ------------------------------------------------------------------------------------------------
+
+		// --- Start of RAM code ----------------------------------------------------------------------------------------------
+		addr = 0x5004; // Addresses 0x5000..0x5003 are reserved for 0xdeadbeef
+		// Note that these addresses are mapped to virtual addresses 0x10000000 through 0x10000fff
+		emit(ram, "\xba\x78\x56\x34\x12");             // [0x5004] mov    edx, 0x12345678
+		emit(ram, "\xbf\x00\x00\x00\x10");             // [0x5009] mov    edi, 0x10000000
+		emit(ram, "\x31\xd0");                         // [0x500e] xor    eax, edx
+		emit(ram, "\x89\x07");                         // [0x5010] mov    [edi], eax
+		emit(ram, "\xf4");                             // [0x5012] hlt
 
 		#undef emit
 	}
@@ -407,9 +426,47 @@ int main() {
 	case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
 	}
 
+	// Validate first stop output
 	if (regs._eip == 0xffffff9f && regs._cs.selector == 0x0008) {
 		printf("Emulation stopped at the right place!\n");
 		if (regs._eax == 0xdeadbeef) {
+			printf("And we got the right result!\n");
+		}
+	}
+
+	printf("\nFirst stop CPU register state:\n");
+	printRegs(&regs);
+	//printFPURegs(&fpu);
+	printf("\n");
+
+	// Run CPU once more
+	vcpu->Run();
+	switch (tunnel->_exit_status) {
+	case HAX_EXIT_HLT:
+		printf("Emulation exited due to HLT instruction as expected!\n");
+		break;
+	default:
+		printf("Emulation exited for another reason: %d\n", tunnel->_exit_status);
+		break;
+	}
+
+	// Refresh CPU registers
+	vcpuStatus = vcpu->GetRegisters(&regs);
+	switch (vcpuStatus) {
+	case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+	}
+
+	// Refresh FPU registers
+	vcpuStatus = vcpu->GetFPURegisters(&fpu);
+	switch (vcpuStatus) {
+	case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
+	}
+
+	// Validate second stop output
+	if (regs._eip == 0x10000013) {
+		printf("Emulation stopped at the right place!\n");
+		uint32_t memValue = *(uint32_t *)&ram[0x5000];
+		if (regs._eax == 0xcc99e897 && regs._edx == 0x12345678 && memValue == 0xcc99e897) {
 			printf("And we got the right result!\n");
 		}
 	}
