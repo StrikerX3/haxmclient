@@ -322,6 +322,7 @@ int main() {
 
 	#ifdef DO_MANUAL_PAGING
 	// Prepare the registers
+	vcpu->GetRegisters(&regs);
 	regs._eax = 0;
 	regs._esi = 0x10000000;
 	regs._eip = 0xffffff9c;
