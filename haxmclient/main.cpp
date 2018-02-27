@@ -26,6 +26,7 @@ void printFPURegs(struct fx_layout *fpu) {
 }
 
 #define DO_MANUAL_JMP
+#define DO_MANUAL_PAGING
 
 int main() {
 	// Allocate memory for the RAM and ROM
@@ -153,8 +154,15 @@ int main() {
 		// Stop
 		emit(rom, "\xf4");                             // [0xff9e] hlt
 
+		#ifdef DO_MANUAL_PAGING
+		// Set a HLT at the start of the 32-bit code
+		addr = 0xff00;
+		emit(rom, "\xf4");
+		#endif	
+
 		#undef emit
 	}
+
 
 	Haxm haxm;
 
@@ -272,18 +280,6 @@ int main() {
 	//printFPURegs(&fpu);
 	printf("\n");
 
-	/*// Manipulate CPU registers
-	regs._cx = 0x4321;
-	vcpuStatus = vcpu->SetRegisters(&regs);
-	switch (vcpuStatus) {
-	case HXVCPUS_FAILED: printf("Failed to set VCPU registers: %d\n", vcpu->GetLastError()); return -1;
-	}
-
-	printf("\CPU registers after manipulation:\n");
-	printRegs(&regs);
-	//printFPURegs(&fpu);
-	printf("\n");*/
-
 	// The CPU starts in 16-bit real mode.
 	// Memory addressing is based on segments and offsets, where a segment is basically a 16-byte offset.
 
@@ -323,6 +319,49 @@ int main() {
 	// Run the CPU again!
 	vcpu->Run();
 	#endif
+
+	#ifdef DO_MANUAL_PAGING
+	// Prepare the registers
+	regs._eax = 0;
+	regs._esi = 0x10000000;
+	regs._eip = 0xffffff9c;
+	regs._cr0 = 0xe0000011;
+	regs._cr3 = 0x1000;
+	regs._ss.selector = regs._ds.selector = regs._es.selector = 0x0010; 
+	regs._ss.limit = regs._ds.limit = regs._es.limit = 0xffffffff;
+	regs._ss.base = regs._ds.base = regs._es.base = 0;
+	regs._ss.ar = regs._ds.ar = regs._es.ar = 0xc093;
+
+	vcpu->SetRegisters(&regs);
+
+	// Clear page directory
+	memset(&ram[0x1000], 0, 0x1000);
+	
+	// Write 0xdeadbeef at physical memory address 0x5000
+	*(uint32_t *)&ram[0x5000] = 0xdeadbeef;
+
+	// Identity map the RAM
+	for (uint32_t i = 0; i < 0x100; i++) {
+		*(uint32_t *)&ram[0x2000 + i * 4] = 0x0003 + i * 0x1000;
+	}
+
+	// Identity map the ROM
+	for (uint32_t i = 0; i < 0x10; i++) {
+		*(uint32_t *)&ram[0x3fc0 + i * 4] = 0xffff0003 + i * 0x1000;
+	}
+
+	// Map physical address 0x5000 to virtual address 0x10000000
+	*(uint32_t *)&ram[0x4000] = 0x5003;
+
+	// Add page tables into page directory
+	*(uint32_t *)&ram[0x1000] = 0x2003;
+	*(uint32_t *)&ram[0x1ffc] = 0x3003;
+	*(uint32_t *)&ram[0x1100] = 0x4003;
+
+	// Run the CPU again!
+	vcpu->Run();
+	#endif
+
 
 	// Get CPU status
 	auto tunnel = vcpu->Tunnel();
