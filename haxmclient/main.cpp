@@ -29,9 +29,9 @@ void printFPURegs(struct fx_layout *fpu) {
 
 int main() {
 	// Allocate memory for the RAM and ROM
-	const uint32_t ramSize = 256 * 4096; // 1 MB
+	const uint32_t ramSize = 256 * 4096; // 1 MiB
 	const uint32_t ramBase = 0x00000000;
-	const uint32_t romSize = 16 * 4096; // 64 KB
+	const uint32_t romSize = 16 * 4096; // 64 KiB
 	const uint32_t romBase = 0xFFFF0000;
 
 	char *ram;
@@ -55,8 +55,8 @@ int main() {
 		// GDT/IDT talbe
 		addr = 0xffd8;
 		emit(rom, "\x00\x00\x00\x00\x00\x00\x00\x00"); // [0xffd8] GDT entry 0: null
-		emit(rom, "\xff\xff\x00\x00\x00\x9b\xcf\x00"); // [0xffe0] GDT entry 1: code
-		emit(rom, "\xff\xff\x00\x00\x00\x93\xcf\x00"); // [0xffe8] GDT entry 2: data
+		emit(rom, "\xff\xff\x00\x00\x00\x9b\xcf\x00"); // [0xffe0] GDT entry 1: code (full access to 4 GB linear space)
+		emit(rom, "\xff\xff\x00\x00\x00\x93\xcf\x00"); // [0xffe8] GDT entry 2: data (full access to 4 GB linear space)
 
 		// Load GDT/IDT tables
 		addr = 0xffb8;
@@ -73,6 +73,14 @@ int main() {
 		emit(rom, "\x66\xea\x00\xff\xff\xff\x08\x00"); // [0xffce] jmp    dword 0x8:0xffffff00
 		#endif
 		
+		// Prepare memory for paging
+		// (based on https://github.com/unicorn-engine/unicorn/blob/master/tests/unit/test_x86_soft_paging.c)
+		// 0x1000 = Page directory
+		// 0x2000 = Page table (identity map RAM)
+		// 0x3000 = Page table (identity map ROM)
+		// 0x4000 = Page table (0x10000xxx -> 0x00004xxx)
+		// 0x5000 = Data area (first dword reads 0xdeadbeef)
+
 		// Load segment registers
 		addr = 0xff00;
 		emit(rom, "\x33\xc0");                         // [0xff00] xor    eax, eax
@@ -81,13 +89,69 @@ int main() {
 		emit(rom, "\x8e\xc0");                         // [0xff06] mov     es, eax
 		emit(rom, "\x8e\xd0");                         // [0xff08] mov     ss, eax
 
-		// Do some simple things in protected mode
-		emit(rom, "\xbb\x78\x56\x34\x12");             // [0xff0a] mov    ebx, 0x12345678
-		emit(rom, "\xba\x33\x33\x33\x33");             // [0xff0f] mov    edx, 0x33333333
-		emit(rom, "\x01\xd3");                         // [0xff14] add    ebx, edx
-		emit(rom, "\x01\xcb");                         // [0xff16] add    ebx, ecx
-		emit(rom, "\x31\xc9");                         // [0xff18] xor    ecx, ecx
-		emit(rom, "\xf4");                             // [0xff1a] hlt
+		// Clear page directory
+		emit(rom, "\xbf\x00\x10\x00\x00");             // [0xff0a] mov    edi, 0x1000
+		emit(rom, "\xb9\x00\x10\x00\x00");             // [0xff0f] mov    ecx, 0x1000
+		emit(rom, "\x31\xc0");                         // [0xff14] xor    eax, eax
+		emit(rom, "\xf3\xab");                         // [0xff16] rep    stosd
+
+		// Write 0xdeadbeef at physical memory address 0x5000
+		emit(rom, "\xbf\x00\x50\x00\x00");             // [0xff18] mov    edi, 0x5000
+		emit(rom, "\xb8\xef\xbe\xad\xde");             // [0xff1d] mov    eax, 0xdeadbeef
+		emit(rom, "\x89\x07");                         // [0xff22] mov    [edi], eax
+
+        // Identity map the RAM
+		emit(rom, "\xb9\x00\x01\x00\x00");             // [0xff24] mov    ecx, 0x100
+		emit(rom, "\xbf\x00\x20\x00\x00");             // [0xff29] mov    edi, 0x2000
+		emit(rom, "\xb8\x03\x00\x00\x00");             // [0xff2e] mov    eax, 0x0003
+        // aLoop:
+		emit(rom, "\xab");                             // [0xff33] stosd
+		emit(rom, "\x05\x00\x10\x00\x00");             // [0xff34] add    eax, 0x1000
+		emit(rom, "\xe2\xf8");                         // [0xff39] loop   aLoop
+
+        // Identity map the ROM
+		emit(rom, "\xb9\x10\x00\x00\x00");             // [0xff3b] mov    ecx, 0x10
+		emit(rom, "\xbf\xc0\x3f\x00\x00");             // [0xff40] mov    edi, 0x3fc0
+		emit(rom, "\xb8\x03\x00\xff\xff");             // [0xff45] mov    eax, 0xffff0003
+        // bLoop:
+		emit(rom, "\xab");                             // [0xff4a] stosd
+		emit(rom, "\x05\x00\x10\x00\x00");             // [0xff4b] add    eax, 0x1000
+		emit(rom, "\xe2\xf8");                         // [0xff50] loop   bLoop
+
+        // Map physical address 0x5000 to virtual address 0x10000000
+		emit(rom, "\xbf\x00\x40\x00\x00");             // [0xff52] mov    edi, 0x4000
+		emit(rom, "\xb8\x03\x50\x00\x00");             // [0xff57] mov    eax, 0x5003
+		emit(rom, "\x89\x07");                         // [0xff5c] mov    [edi], eax
+
+        // Add page tables into page directory
+		emit(rom, "\xbf\x00\x10\x00\x00");             // [0xff5e] mov    edi, 0x1000
+		emit(rom, "\xb8\x03\x20\x00\x00");             // [0xff63] mov    eax, 0x2003
+		emit(rom, "\x89\x07");                         // [0xff68] mov    [edi], eax
+		emit(rom, "\xbf\xfc\x1f\x00\x00");             // [0xff6a] mov    edi, 0x1ffc
+		emit(rom, "\xb8\x03\x30\x00\x00");             // [0xff6f] mov    eax, 0x3003
+		emit(rom, "\x89\x07");                         // [0xff74] mov    [edi], eax
+		emit(rom, "\xbf\x00\x11\x00\x00");             // [0xff76] mov    edi, 0x1100
+		emit(rom, "\xb8\x03\x40\x00\x00");             // [0xff7b] mov    eax, 0x4003
+		emit(rom, "\x89\x07");                         // [0xff80] mov    [edi], eax
+
+        // Load the page directory register
+		emit(rom, "\xb8\x00\x10\x00\x00");             // [0xff82] mov    eax, 0x1000
+		emit(rom, "\x0f\x22\xd8");                     // [0xff87] mov    cr3, eax
+
+        // Enable paging
+		emit(rom, "\x0f\x20\xc0");                     // [0xff8a] mov    eax, cr0
+		emit(rom, "\x0d\x00\x00\x00\x80");             // [0xff8d] or     eax, 0x80000000
+		emit(rom, "\x0f\x22\xc0");                     // [0xff92] mov    cr0, eax
+
+        // Clear EAX
+		emit(rom, "\x31\xc0");                         // [0xff95] xor    eax, eax
+
+        // Load using virtual memory address; EAX = 0xdeadbeef
+		emit(rom, "\xbe\x00\x00\x00\x10");             // [0xff97] mov    esi, 0x10000000
+		emit(rom, "\x8b\x06");                         // [0xff9c] mov    eax, [esi]
+
+		// Stop
+		emit(rom, "\xf4");                             // [0xff9e] hlt
 
 		#undef emit
 	}
@@ -208,7 +272,7 @@ int main() {
 	//printFPURegs(&fpu);
 	printf("\n");
 
-	// Manipulate CPU registers
+	/*// Manipulate CPU registers
 	regs._cx = 0x4321;
 	vcpuStatus = vcpu->SetRegisters(&regs);
 	switch (vcpuStatus) {
@@ -218,7 +282,7 @@ int main() {
 	printf("\CPU registers after manipulation:\n");
 	printRegs(&regs);
 	//printFPURegs(&fpu);
-	printf("\n");
+	printf("\n");*/
 
 	// The CPU starts in 16-bit real mode.
 	// Memory addressing is based on segments and offsets, where a segment is basically a 16-byte offset.
@@ -283,9 +347,9 @@ int main() {
 	case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
 	}
 
-	if (regs._eip == 0xffffff1b && regs._cs.selector == 0x0008) {
+	if (regs._eip == 0xffffff9f && regs._cs.selector == 0x0008) {
 		printf("Emulation stopped at the right place!\n");
-		if (regs._ebx == 0x4567cccc && regs._ecx == 0x00000000 && regs._edx == 0x33333333) {
+		if (regs._eax == 0xdeadbeef) {
 			printf("And we got the right result!\n");
 		}
 	}
