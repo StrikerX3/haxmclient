@@ -25,6 +25,7 @@ void printFPURegs(struct fx_layout *fpu) {
 	}
 }
 
+#define DO_MANUAL_INIT
 #define DO_MANUAL_JMP
 #define DO_MANUAL_PAGING
 
@@ -50,7 +51,12 @@ int main() {
 		
 		// Jump to initialization code and define GDT/IDT table pointer
 		addr = 0xfff0;
+		#ifdef DO_MANUAL_INIT
+		emit(rom, "\xf4");                             // [0xfff0] hlt
+		emit(rom, "\x90");                             // [0xfff1] nop
+		#else
 		emit(rom, "\xeb\xc6");                         // [0xfff0] jmp    short 0x1b8
+		#endif
 		emit(rom, "\x18\x00\xd8\xff\xff\xff");         // [0xfff2] GDT pointer: 0xffffffd8:0x0018
 		
 		// GDT/IDT table
@@ -274,6 +280,20 @@ int main() {
 	switch (vcpuStatus) {
 	case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
 	}
+
+	#ifdef DO_MANUAL_INIT
+	// Load GDT/IDT tables
+	regs._gdt.base = regs._idt.base = 0xffffffd8;
+	regs._gdt.limit = regs._idt.limit = 0x0018;
+
+	// Enter protected mode
+	regs._cr0 |= 1;
+
+	// Skip initialization code
+	regs._eip = 0xffce;
+
+	vcpu->SetRegisters(&regs);
+	#endif
 	
 	printf("\nInitial CPU register state:\n");
 	printRegs(&regs);
