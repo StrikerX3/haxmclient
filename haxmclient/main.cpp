@@ -25,9 +25,9 @@ void printFPURegs(struct fx_layout *fpu) {
 	}
 }
 
-#define DO_MANUAL_INIT
-#define DO_MANUAL_JMP
-#define DO_MANUAL_PAGING
+//#define DO_MANUAL_INIT
+//#define DO_MANUAL_JMP
+//#define DO_MANUAL_PAGING
 
 int main() {
 	// Allocate memory for the RAM and ROM
@@ -61,18 +61,51 @@ int main() {
 		#else
 		emit(rom, "\xeb\xc6");                         // [0xfff0] jmp    short 0x1b8
 		#endif
-		emit(rom, "\x18\x00\xd8\xff\xff\xff");         // [0xfff2] GDT pointer: 0xffffffd8:0x0018
+		emit(rom, "\x18\x00\x00\x00\xff\xff");         // [0xfff2] GDT pointer: 0xffff0000:0x0018
+		emit(rom, "\x10\x01\x18\x00\xff\xff");         // [0xfff8] IDT pointer: 0xffff0018:0x0110
+		// There's room for two bytes at the end, so let's fill it up with HLTs
+		emit(rom, "\xf4");                             // [0xfffe] hlt
+		emit(rom, "\xf4");                             // [0xffff] hlt
 		
-		// GDT/IDT table
-		addr = 0xffd8;
-		emit(rom, "\x00\x00\x00\x00\x00\x00\x00\x00"); // [0xffd8] GDT entry 0: null
-		emit(rom, "\xff\xff\x00\x00\x00\x9b\xcf\x00"); // [0xffe0] GDT entry 1: code (full access to 4 GB linear space)
-		emit(rom, "\xff\xff\x00\x00\x00\x93\xcf\x00"); // [0xffe8] GDT entry 2: data (full access to 4 GB linear space)
+		// GDT table
+		addr = 0x0000;
+		emit(rom, "\x00\x00\x00\x00\x00\x00\x00\x00"); // [0x0000] GDT entry 0: null
+		emit(rom, "\xff\xff\x00\x00\x00\x9b\xcf\x00"); // [0x0008] GDT entry 1: code (full access to 4 GB linear space)
+		emit(rom, "\xff\xff\x00\x00\x00\x93\xcf\x00"); // [0x0010] GDT entry 2: data (full access to 4 GB linear space)
 
-		// Load GDT/IDT tables
+		// IDT table
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x0018] Vector 0x00: Divide by zero
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x0020] Vector 0x01: Reserved
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x0028] Vector 0x02: Non-maskable interrupt
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x0030] Vector 0x03: Breakpoint (INT3)
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x0038] Vector 0x04: Overflow (INTO)
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x0040] Vector 0x05: Bounds range exceeded (BOUND)
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x0048] Vector 0x06: Invalid opcode (UD2)
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x0050] Vector 0x07: Device not available (WAIT/FWAIT)
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x0058] Vector 0x08: Double fault
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x0060] Vector 0x09: Coprocessor segment overrun
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x0068] Vector 0x0A: Invalid TSS
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x0070] Vector 0x0B: Segment not present
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x0078] Vector 0x0C: Stack-segment fault
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x0080] Vector 0x0D: General protection fault
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x0088] Vector 0x0E: Page fault
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x0090] Vector 0x0F: Reserved
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x0098] Vector 0x10: x87 FPU error
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x00a0] Vector 0x11: Alignment check
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x00a8] Vector 0x12: Machine check
+		emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x00b0] Vector 0x13: SIMD Floating-Point Exception
+		for (uint8_t i = 0x14; i <= 0x1f; i++) {
+			emit(rom, "\x03\x10\x08\x00\x00\x8f\x00\x10"); // [0x00b8..0x0110] Vector 0x14..0x1F: Reserved
+		}
+		
+		// User defined IDTs
+		emit(rom, "\x00\x10\x08\x00\x00\x8f\x00\x10"); // [0x0118] Vector 0x20: Just IRET
+		emit(rom, "\x01\x10\x08\x00\x00\x8f\x00\x10"); // [0x0120] Vector 0x21: HLT, then IRET
+
+		// Load GDT and IDT tables
 		addr = 0xffb8;
 		emit(rom, "\x66\x2e\x0f\x01\x16\xf2\xff");     // [0xffb8] lgdt   [cs:0xfff2]
-		emit(rom, "\x66\x2e\x0f\x01\x1e\xf2\xff");     // [0xffbf] lidt   [cs:0xfff2]
+		emit(rom, "\x66\x2e\x0f\x01\x1e\xf8\xff");     // [0xffbf] lidt   [cs:0xfff8]
 
 		// Enter protected mode
 		emit(rom, "\x0f\x20\xc0");                     // [0xffc6] mov    eax, cr0
@@ -91,8 +124,9 @@ int main() {
 		// 0x1000 = Page directory
 		// 0x2000 = Page table (identity map RAM)
 		// 0x3000 = Page table (identity map ROM)
-		// 0x4000 = Page table (0x10000xxx -> 0x00004xxx)
+		// 0x4000 = Page table (0x10000xxx -> 0x00005xxx, 0x10001xxx -> 0x00006xxx)
 		// 0x5000 = Data area (first dword reads 0xdeadbeef)
+		// 0x6000 = Interrupt handler code area
 
 		// Load segment registers
 		addr = 0xff00;
@@ -118,7 +152,7 @@ int main() {
 		emit(rom, "\xb8\xef\xbe\xad\xde");             // [0xff1d] mov    eax, 0xdeadbeef
 		emit(rom, "\x89\x07");                         // [0xff22] mov    [edi], eax
 
-        // Identity map the RAM
+        // Identity map the RAM to 0x00000000
 		emit(rom, "\xb9\x00\x01\x00\x00");             // [0xff24] mov    ecx, 0x100
 		emit(rom, "\xbf\x00\x20\x00\x00");             // [0xff29] mov    edi, 0x2000
 		emit(rom, "\xb8\x03\x00\x00\x00");             // [0xff2e] mov    eax, 0x0003
@@ -141,49 +175,84 @@ int main() {
 		emit(rom, "\xb8\x03\x50\x00\x00");             // [0xff57] mov    eax, 0x5003
 		emit(rom, "\x89\x07");                         // [0xff5c] mov    [edi], eax
 
-        // Add page tables into page directory
-		emit(rom, "\xbf\x00\x10\x00\x00");             // [0xff5e] mov    edi, 0x1000
-		emit(rom, "\xb8\x03\x20\x00\x00");             // [0xff63] mov    eax, 0x2003
+        // Map physical address 0x6000 to virtual address 0x10001000
+		emit(rom, "\xbf\x04\x40\x00\x00");             // [0xff5e] mov    edi, 0x4004
+		emit(rom, "\xb8\x03\x60\x00\x00");             // [0xff63] mov    eax, 0x6003
 		emit(rom, "\x89\x07");                         // [0xff68] mov    [edi], eax
-		emit(rom, "\xbf\xfc\x1f\x00\x00");             // [0xff6a] mov    edi, 0x1ffc
-		emit(rom, "\xb8\x03\x30\x00\x00");             // [0xff6f] mov    eax, 0x3003
+
+        // Add page tables into page directory
+		emit(rom, "\xbf\x00\x10\x00\x00");             // [0xff6a] mov    edi, 0x1000
+		emit(rom, "\xb8\x03\x20\x00\x00");             // [0xff6f] mov    eax, 0x2003
 		emit(rom, "\x89\x07");                         // [0xff74] mov    [edi], eax
-		emit(rom, "\xbf\x00\x11\x00\x00");             // [0xff76] mov    edi, 0x1100
-		emit(rom, "\xb8\x03\x40\x00\x00");             // [0xff7b] mov    eax, 0x4003
-		emit(rom, "\x89\x07");                         // [0xff80] mov    [edi], eax
+		emit(rom, "\xbf\xfc\x1f\x00\x00");             // [0xff76] mov    edi, 0x1ffc
+		emit(rom, "\xb8\x03\x30\x00\x00");             // [0xff7a] mov    eax, 0x3003
+		emit(rom, "\x89\x07");                         // [0xff7f] mov    [edi], eax
+		emit(rom, "\xbf\x00\x11\x00\x00");             // [0xff81] mov    edi, 0x1100
+		emit(rom, "\xb8\x03\x40\x00\x00");             // [0xff86] mov    eax, 0x4003
+		emit(rom, "\x89\x07");                         // [0xff8a] mov    [edi], eax
 
         // Load the page directory register
-		emit(rom, "\xb8\x00\x10\x00\x00");             // [0xff82] mov    eax, 0x1000
-		emit(rom, "\x0f\x22\xd8");                     // [0xff87] mov    cr3, eax
+		emit(rom, "\xb8\x00\x10\x00\x00");             // [0xff8c] mov    eax, 0x1000
+		emit(rom, "\x0f\x22\xd8");                     // [0xff91] mov    cr3, eax
 
         // Enable paging
-		emit(rom, "\x0f\x20\xc0");                     // [0xff8a] mov    eax, cr0
-		emit(rom, "\x0d\x00\x00\x00\x80");             // [0xff8d] or     eax, 0x80000000
-		emit(rom, "\x0f\x22\xc0");                     // [0xff92] mov    cr0, eax
+		emit(rom, "\x0f\x20\xc0");                     // [0xff94] mov    eax, cr0
+		emit(rom, "\x0d\x00\x00\x00\x80");             // [0xff97] or     eax, 0x80000000
+		emit(rom, "\x0f\x22\xc0");                     // [0xff9c] mov    cr0, eax
 
         // Clear EAX
-		emit(rom, "\x31\xc0");                         // [0xff95] xor    eax, eax
+		emit(rom, "\x31\xc0");                         // [0xff9f] xor    eax, eax
 
         // Load using virtual memory address; EAX = 0xdeadbeef
-		emit(rom, "\xbe\x00\x00\x00\x10");             // [0xff97] mov    esi, 0x10000000
-		emit(rom, "\x8b\x06");                         // [0xff9c] mov    eax, [esi]
+		emit(rom, "\xbe\x00\x00\x00\x10");             // [0xffa4] mov    esi, 0x10000000
+		emit(rom, "\x8b\x06");                         // [0xffa9] mov    eax, [esi]
 
 		// First stop
-		emit(rom, "\xf4");                             // [0xff9e] hlt
+		emit(rom, "\xf4");                             // [0xffab] hlt
 		
 		// Jump to RAM
-		emit(rom, "\xe9\x60\x00\x00\x10");             // [0xff9f] jmp    0x10000004
+		emit(rom, "\xe9\x54\x00\x00\x10");             // [0xffac] jmp    0x10000004
+		// 7 bytes to spare... 0xffb8 contains initialization code
 
 		// --- End of ROM code ------------------------------------------------------------------------------------------------
 
 		// --- Start of RAM code ----------------------------------------------------------------------------------------------
 		addr = 0x5004; // Addresses 0x5000..0x5003 are reserved for 0xdeadbeef
 		// Note that these addresses are mapped to virtual addresses 0x10000000 through 0x10000fff
+		
+		// Do some basic stuff
 		emit(ram, "\xba\x78\x56\x34\x12");             // [0x5004] mov    edx, 0x12345678
 		emit(ram, "\xbf\x00\x00\x00\x10");             // [0x5009] mov    edi, 0x10000000
 		emit(ram, "\x31\xd0");                         // [0x500e] xor    eax, edx
 		emit(ram, "\x89\x07");                         // [0x5010] mov    [edi], eax
 		emit(ram, "\xf4");                             // [0x5012] hlt
+
+		// Setup a proper stack
+		emit(ram, "\x31\xed");                         // [0x5013] xor    ebp, ebp
+		emit(ram, "\xbc\x00\x00\x10\x00");             // [0x5015] mov    esp, 0x100000
+
+		// Test the stack
+		emit(ram, "\x68\xfe\xca\x0d\xf0");             // [0x501a] push   0xf00dcafe
+		emit(ram, "\x5a");                             // [0x501f] pop    edx
+		emit(ram, "\xf4");                             // [0x5020] hlt
+
+		// Call interrupts
+		emit(ram, "\xcd\x20");                         // [0x5021] int    0x20
+		emit(ram, "\xcd\x21");                         // [0x5023] int    0x21
+		emit(ram, "\xf4");                             // [0x5025] hlt
+
+		addr = 0x6000; // Interrupt handlers
+		// Note that these addresses are mapped to virtual addresses 0x10001000 through 0x10001fff
+		// 0x20: Just IRET
+		emit(ram, "\xcf");                             // [0x6000] iretd
+		
+		// 0x21: HLT, then IRET
+		emit(ram, "\xf4");                             // [0x6001] hlt
+		emit(ram, "\xcf");                             // [0x6002] iretd
+
+		// 0x00 .. 0x1F: Clear stack then IRET
+		emit(ram, "\x83\xc4\x04");                     // [0x6003] add    esp, 4
+		emit(ram, "\xcf");                             // [0x6006] iretd
 
 		#undef emit
 	}
@@ -319,6 +388,8 @@ int main() {
 	//printFPURegs(&fpu);
 	printf("\n");
 
+	// ----- Start of emulation -----------------------------------------------------------------------------------------------
+
 	// The CPU starts in 16-bit real mode.
 	// Memory addressing is based on segments and offsets, where a segment is basically a 16-byte offset.
 
@@ -402,6 +473,9 @@ int main() {
 	vcpu->Run();
 	#endif
 
+	// ----- First part -------------------------------------------------------------------------------------------------------
+
+	printf("Testing data in virtual memory\n\n");
 
 	// Get CPU status
 	auto tunnel = vcpu->Tunnel();
@@ -427,7 +501,7 @@ int main() {
 	}
 
 	// Validate first stop output
-	if (regs._eip == 0xffffff9f && regs._cs.selector == 0x0008) {
+	if (regs._eip == 0xffffffab && regs._cs.selector == 0x0008) {
 		printf("Emulation stopped at the right place!\n");
 		if (regs._eax == 0xdeadbeef) {
 			printf("And we got the right result!\n");
@@ -438,6 +512,10 @@ int main() {
 	printRegs(&regs);
 	//printFPURegs(&fpu);
 	printf("\n");
+
+	// ----- Second part ------------------------------------------------------------------------------------------------------
+	
+	printf("Testing code in virtual memory\n\n");
 
 	// Run CPU once more
 	vcpu->Run();
@@ -469,6 +547,118 @@ int main() {
 		if (regs._eax == 0xcc99e897 && regs._edx == 0x12345678 && memValue == 0xcc99e897) {
 			printf("And we got the right result!\n");
 		}
+	}
+
+	printf("\nCPU register state:\n");
+	printRegs(&regs);
+	//printFPURegs(&fpu);
+	printf("\n");
+
+	// ----- Stack ------------------------------------------------------------------------------------------------------------
+
+	printf("Testing the stack\n\n");
+
+	// Run CPU once more
+	vcpu->Run();
+	switch (tunnel->_exit_status) {
+	case HAX_EXIT_HLT:
+		printf("Emulation exited due to HLT instruction as expected!\n");
+		break;
+	default:
+		printf("Emulation exited for another reason: %d\n", tunnel->_exit_status);
+		break;
+	}
+
+	// Refresh CPU registers
+	vcpuStatus = vcpu->GetRegisters(&regs);
+	switch (vcpuStatus) {
+	case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+	}
+
+	// Refresh FPU registers
+	vcpuStatus = vcpu->GetFPURegisters(&fpu);
+	switch (vcpuStatus) {
+	case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
+	}
+
+	// Validate stack results
+	if (regs._eip == 0x10000021) {
+		printf("Emulation stopped at the right place!\n");
+		uint32_t memValue = *(uint32_t *)&ram[0xffffc];
+		if (regs._edx == 0xf00dcafe && regs._esp == 0x00100000 && memValue == 0xf00dcafe) {
+			printf("And we got the right result!\n");
+		}
+	}
+
+	printf("\nCPU register state:\n");
+	printRegs(&regs);
+	//printFPURegs(&fpu);
+	printf("\n");
+
+	// ----- Interrupts -------------------------------------------------------------------------------------------------------
+
+	printf("Testing interrupts\n\n");
+	
+	// First stop at the HLT inside INT 0x21
+	vcpu->Run();
+	switch (tunnel->_exit_status) {
+	case HAX_EXIT_HLT:
+		printf("Emulation exited due to HLT instruction as expected!\n");
+		break;
+	default:
+		printf("Emulation exited for another reason: %d\n", tunnel->_exit_status);
+		break;
+	}
+
+	// Refresh CPU registers
+	vcpuStatus = vcpu->GetRegisters(&regs);
+	switch (vcpuStatus) {
+	case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+	}
+
+	// Refresh FPU registers
+	vcpuStatus = vcpu->GetFPURegisters(&fpu);
+	switch (vcpuStatus) {
+	case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
+	}
+
+	// Validate registers
+	if (regs._eip == 0x10001002) {
+		printf("Emulation stopped at the right place!\n");
+	}
+
+	printf("\nCPU register state:\n");
+	printRegs(&regs);
+	//printFPURegs(&fpu);
+	printf("\n");
+
+
+	// Now we should hit the HLT after INT 0x21
+	vcpu->Run();
+	switch (tunnel->_exit_status) {
+	case HAX_EXIT_HLT:
+		printf("Emulation exited due to HLT instruction as expected!\n");
+		break;
+	default:
+		printf("Emulation exited for another reason: %d\n", tunnel->_exit_status);
+		break;
+	}
+
+	// Refresh CPU registers
+	vcpuStatus = vcpu->GetRegisters(&regs);
+	switch (vcpuStatus) {
+	case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+	}
+
+	// Refresh FPU registers
+	vcpuStatus = vcpu->GetFPURegisters(&fpu);
+	switch (vcpuStatus) {
+	case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
+	}
+
+	// Validate registers
+	if (regs._eip == 0x10000026) {
+		printf("Emulation stopped at the right place!\n");
 	}
 
 	printf("\nFinal CPU register state:\n");
