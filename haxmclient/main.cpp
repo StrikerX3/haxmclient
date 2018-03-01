@@ -185,33 +185,33 @@ int main() {
 		emit(rom, "\xb8\x03\x20\x00\x00");             // [0xff6f] mov    eax, 0x2003
 		emit(rom, "\x89\x07");                         // [0xff74] mov    [edi], eax
 		emit(rom, "\xbf\xfc\x1f\x00\x00");             // [0xff76] mov    edi, 0x1ffc
-		emit(rom, "\xb8\x03\x30\x00\x00");             // [0xff7a] mov    eax, 0x3003
-		emit(rom, "\x89\x07");                         // [0xff7f] mov    [edi], eax
-		emit(rom, "\xbf\x00\x11\x00\x00");             // [0xff81] mov    edi, 0x1100
-		emit(rom, "\xb8\x03\x40\x00\x00");             // [0xff86] mov    eax, 0x4003
-		emit(rom, "\x89\x07");                         // [0xff8a] mov    [edi], eax
+		emit(rom, "\xb8\x03\x30\x00\x00");             // [0xff7b] mov    eax, 0x3003
+		emit(rom, "\x89\x07");                         // [0xff80] mov    [edi], eax
+		emit(rom, "\xbf\x00\x11\x00\x00");             // [0xff82] mov    edi, 0x1100
+		emit(rom, "\xb8\x03\x40\x00\x00");             // [0xff87] mov    eax, 0x4003
+		emit(rom, "\x89\x07");                         // [0xff8c] mov    [edi], eax
 
         // Load the page directory register
-		emit(rom, "\xb8\x00\x10\x00\x00");             // [0xff8c] mov    eax, 0x1000
-		emit(rom, "\x0f\x22\xd8");                     // [0xff91] mov    cr3, eax
+		emit(rom, "\xb8\x00\x10\x00\x00");             // [0xff8e] mov    eax, 0x1000
+		emit(rom, "\x0f\x22\xd8");                     // [0xff93] mov    cr3, eax
 
         // Enable paging
-		emit(rom, "\x0f\x20\xc0");                     // [0xff94] mov    eax, cr0
-		emit(rom, "\x0d\x00\x00\x00\x80");             // [0xff97] or     eax, 0x80000000
-		emit(rom, "\x0f\x22\xc0");                     // [0xff9c] mov    cr0, eax
+		emit(rom, "\x0f\x20\xc0");                     // [0xff96] mov    eax, cr0
+		emit(rom, "\x0d\x00\x00\x00\x80");             // [0xff99] or     eax, 0x80000000
+		emit(rom, "\x0f\x22\xc0");                     // [0xff9e] mov    cr0, eax
 
         // Clear EAX
-		emit(rom, "\x31\xc0");                         // [0xff9f] xor    eax, eax
+		emit(rom, "\x31\xc0");                         // [0xffa1] xor    eax, eax
 
         // Load using virtual memory address; EAX = 0xdeadbeef
-		emit(rom, "\xbe\x00\x00\x00\x10");             // [0xffa4] mov    esi, 0x10000000
-		emit(rom, "\x8b\x06");                         // [0xffa9] mov    eax, [esi]
+		emit(rom, "\xbe\x00\x00\x00\x10");             // [0xffa3] mov    esi, 0x10000000
+		emit(rom, "\x8b\x06");                         // [0xffa8] mov    eax, [esi]
 
 		// First stop
-		emit(rom, "\xf4");                             // [0xffab] hlt
+		emit(rom, "\xf4");                             // [0xffaa] hlt
 		
 		// Jump to RAM
-		emit(rom, "\xe9\x54\x00\x00\x10");             // [0xffac] jmp    0x10000004
+		emit(rom, "\xe9\x54\x00\x00\x10");             // [0xffab] jmp    0x10000004
 		// 7 bytes to spare... 0xffb8 contains initialization code
 
 		// --- End of ROM code ------------------------------------------------------------------------------------------------
@@ -370,9 +370,13 @@ int main() {
 	}
 
 	#ifdef DO_MANUAL_INIT
-	// Load GDT/IDT tables
-	regs._gdt.base = regs._idt.base = 0xffffffd8;
-	regs._gdt.limit = regs._idt.limit = 0x0018;
+	// Load GDT table
+	regs._gdt.base = 0xffff0000;
+	regs._gdt.limit = 0x0018;
+
+	// Load IDT table
+	regs._idt.base = 0xffff0018;
+	regs._idt.limit = 0x0110;
 
 	// Enter protected mode
 	regs._cr0 |= 1;
@@ -435,7 +439,7 @@ int main() {
 	vcpu->GetRegisters(&regs);
 	regs._eax = 0;
 	regs._esi = 0x10000000;
-	regs._eip = 0xffffff9c;
+	regs._eip = 0xffffffa8;
 	regs._cr0 = 0xe0000011;
 	regs._cr3 = 0x1000;
 	regs._ss.selector = regs._ds.selector = regs._es.selector = 0x0010; 
@@ -451,7 +455,7 @@ int main() {
 	// Write 0xdeadbeef at physical memory address 0x5000
 	*(uint32_t *)&ram[0x5000] = 0xdeadbeef;
 
-	// Identity map the RAM
+	// Identity map the RAM to 0x00000000
 	for (uint32_t i = 0; i < 0x100; i++) {
 		*(uint32_t *)&ram[0x2000 + i * 4] = 0x0003 + i * 0x1000;
 	}
@@ -463,6 +467,9 @@ int main() {
 
 	// Map physical address 0x5000 to virtual address 0x10000000
 	*(uint32_t *)&ram[0x4000] = 0x5003;
+
+	// Map physical address 0x6000 to virtual address 0x10001000
+	*(uint32_t *)&ram[0x4004] = 0x6003;
 
 	// Add page tables into page directory
 	*(uint32_t *)&ram[0x1000] = 0x2003;
