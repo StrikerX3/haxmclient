@@ -859,6 +859,7 @@ int main() {
 	}
 	case HAX_EXIT_STATECHANGE: {
 		// https://github.com/intel/haxm/issues/12
+		// haxm_panic:Unexpected MMIO instruction (opcode=0x85, exit_instr_length=2, num=0, gpa=0xe0000004, instr[0..5]=0x85 0xf 0xf4 0x0 0x0 0x0)
 		printf("Emulation exited due to a HAXM bug; exit_reason = 0x%x\n", tunnel->_exit_reason);
 		printf("Kernel debug log will probably mention Unexpected MMIO instruction\n");
 		break;
