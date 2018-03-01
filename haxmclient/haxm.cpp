@@ -197,7 +197,7 @@ HaxmVMStatus HaxmVM::AllocateMemory(void *memoryBlock, uint32_t memorySize, uint
 	case HXVM_MEM_RAM: setMemInfo.flags = 0; break;
 	case HXVM_MEM_ROM: setMemInfo.flags = HAX_RAM_INFO_ROM; break;
 	}
-	
+
 	bResult = DeviceIoControl(m_hVM,
 		HAX_VM_IOCTL_SET_RAM,
 		&setMemInfo, sizeof(setMemInfo),
