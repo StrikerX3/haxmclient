@@ -860,7 +860,7 @@ int main() {
 	case HAX_EXIT_STATECHANGE: {
 		// https://github.com/intel/haxm/issues/12
 		printf("Emulation exited due to a HAXM bug; exit_reason = 0x%x\n", tunnel->_exit_reason);
-		printf("Kernel debug log will probably mention invalid opcode\n");
+		printf("Kernel debug log will probably mention Unexpected MMIO instruction\n");
 		break;
 	}
 	default:
