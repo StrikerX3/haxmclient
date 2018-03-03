@@ -48,30 +48,16 @@ int main() {
 		#define emit(buf, code) {memcpy(&buf[addr], code, sizeof(code) - 1); addr += sizeof(code) - 1;}
 		
 		// --- Start of ROM code ----------------------------------------------------------------------------------------------
-
-		// --- 16-bit real mode -----------------------------------------------------------------------------------------------
-
-		// Jump to initialization code and define GDT/IDT table pointer
-		addr = 0xfff0;
-		#ifdef DO_MANUAL_INIT
-		emit(rom, "\xf4");                             // [0xfff0] hlt
-		emit(rom, "\x90");                             // [0xfff1] nop
-		#else
-		emit(rom, "\xeb\xde");                         // [0xfff0] jmp    short 0x1d0
-		#endif
-		emit(rom, "\x18\x00\x00\x00\xff\xff");         // [0xfff2] GDT pointer: 0xffff0000:0x0018
-		emit(rom, "\x10\x01\x18\x00\xff\xff");         // [0xfff8] IDT pointer: 0xffff0018:0x0110
-		// There's room for two bytes at the end, so let's fill it up with HLTs
-		emit(rom, "\xf4");                             // [0xfffe] hlt
-		emit(rom, "\xf4");                             // [0xffff] hlt
 		
-		// GDT table
+        // --- GDT and IDT tables ---------------------------------------------------------------------------------------------
+        
+        // GDT table
 		addr = 0x0000;
 		emit(rom, "\x00\x00\x00\x00\x00\x00\x00\x00"); // [0x0000] GDT entry 0: null
 		emit(rom, "\xff\xff\x00\x00\x00\x9b\xcf\x00"); // [0x0008] GDT entry 1: code (full access to 4 GB linear space)
 		emit(rom, "\xff\xff\x00\x00\x00\x93\xcf\x00"); // [0x0010] GDT entry 2: data (full access to 4 GB linear space)
 
-		// IDT table
+		// IDT table (system)
 		emit(rom, "\x05\x10\x08\x00\x00\x8f\x00\x10"); // [0x0018] Vector 0x00: Divide by zero
 		emit(rom, "\x05\x10\x08\x00\x00\x8f\x00\x10"); // [0x0020] Vector 0x01: Reserved
 		emit(rom, "\x05\x10\x08\x00\x00\x8f\x00\x10"); // [0x0028] Vector 0x02: Non-maskable interrupt
@@ -96,29 +82,9 @@ int main() {
 			emit(rom, "\x05\x10\x08\x00\x00\x8f\x00\x10"); // [0x00b8..0x0110] Vector 0x14..0x1F: Reserved
 		}
 		
-		// User defined IDTs
+		// IDT table (user defined)
 		emit(rom, "\x00\x10\x08\x00\x00\x8f\x00\x10"); // [0x0118] Vector 0x20: Just IRET
 		emit(rom, "\x02\x10\x08\x00\x00\x8f\x00\x10"); // [0x0120] Vector 0x21: HLT, then IRET
-
-		// Load GDT and IDT tables
-		addr = 0xffd0;
-		emit(rom, "\x66\x2e\x0f\x01\x16\xf2\xff");     // [0xffd0] lgdt   [cs:0xfff2]
-		emit(rom, "\x66\x2e\x0f\x01\x1e\xf8\xff");     // [0xffd7] lidt   [cs:0xfff8]
-
-		// Enter protected mode
-		emit(rom, "\x0f\x20\xc0");                     // [0xffde] mov    eax, cr0
-		emit(rom, "\x0c\x01");                         // [0xffe1] or      al, 1
-		emit(rom, "\x0f\x22\xc0");                     // [0xffe3] mov    cr0, eax
-		#ifdef DO_MANUAL_JMP
-		emit(rom, "\xf4")                              // [0xffe6] hlt
-		// Fill the rest with HLTs
-		while (addr < 0xfff0) {
-			emit(rom, "\xf4");                         // [0xffe7..0xffef] hlt
-		}
-		#else
-		emit(rom, "\x66\xea\x00\xff\xff\xff\x08\x00"); // [0xffe6] jmp    dword 0x8:0xffffff00
-		emit(rom, "\xf4");                             // [0xffef] hlt
-		#endif
 
 		// --- 32-bit protected mode ------------------------------------------------------------------------------------------
 		
@@ -226,7 +192,43 @@ int main() {
 		emit(rom, "\xe9\x3c\x00\x00\x10");             // [0xffc3] jmp    0x10000004
 		// .. ends at 0xffc7
 
-		// Initialization code starts at 0xffd0
+		// --- 16-bit real mode transition to 32-bit protected mode -----------------------------------------------------------
+
+		// Load GDT and IDT tables
+		addr = 0xffd0;
+		emit(rom, "\x66\x2e\x0f\x01\x16\xf2\xff");     // [0xffd0] lgdt   [cs:0xfff2]
+		emit(rom, "\x66\x2e\x0f\x01\x1e\xf8\xff");     // [0xffd7] lidt   [cs:0xfff8]
+
+		// Enter protected mode
+		emit(rom, "\x0f\x20\xc0");                     // [0xffde] mov    eax, cr0
+		emit(rom, "\x0c\x01");                         // [0xffe1] or      al, 1
+		emit(rom, "\x0f\x22\xc0");                     // [0xffe3] mov    cr0, eax
+		#ifdef DO_MANUAL_JMP
+		emit(rom, "\xf4")                              // [0xffe6] hlt
+		// Fill the rest with HLTs
+		while (addr < 0xfff0) {
+			emit(rom, "\xf4");                         // [0xffe7..0xffef] hlt
+		}
+		#else
+		emit(rom, "\x66\xea\x00\xff\xff\xff\x08\x00"); // [0xffe6] jmp    dword 0x8:0xffffff00
+		emit(rom, "\xf4");                             // [0xffef] hlt
+		#endif
+
+		// --- 16-bit real mode start -----------------------------------------------------------------------------------------
+
+		// Jump to initialization code and define GDT/IDT table pointer
+		addr = 0xfff0;
+		#ifdef DO_MANUAL_INIT
+		emit(rom, "\xf4");                             // [0xfff0] hlt
+		emit(rom, "\x90");                             // [0xfff1] nop
+		#else
+		emit(rom, "\xeb\xde");                         // [0xfff0] jmp    short 0x1d0
+		#endif
+		emit(rom, "\x18\x00\x00\x00\xff\xff");         // [0xfff2] GDT pointer: 0xffff0000:0x0018
+		emit(rom, "\x10\x01\x18\x00\xff\xff");         // [0xfff8] IDT pointer: 0xffff0018:0x0110
+		// There's room for two bytes at the end, so let's fill it up with HLTs
+		emit(rom, "\xf4");                             // [0xfffe] hlt
+		emit(rom, "\xf4");                             // [0xffff] hlt
 		
 		// --- End of ROM code ------------------------------------------------------------------------------------------------
 
@@ -259,18 +261,39 @@ int main() {
 
 		// -------------------------------
 
+        // Basic PMIO
+        emit(ram, "\x66\xba\x00\x10");                 // [0x5026] mov     dx, 0x1000
+        emit(ram, "\xec");                             // [0x502a] in      al, dx
+        emit(ram, "\x66\x42");                         // [0x502b] inc     dx
+        emit(ram, "\x34\xff");                         // [0x502d] xor     al, 0xff
+        emit(ram, "\xee");                             // [0x502f] out     dx, al
+        emit(ram, "\x66\x42");                         // [0x5030] inc     dx
+        emit(ram, "\x66\xed");                         // [0x5032] in      ax, dx
+        emit(ram, "\x66\x42");                         // [0x5034] inc     dx
+        emit(ram, "\x66\x83\xf0\xff");                 // [0x5036] xor     ax, 0xffff
+        emit(ram, "\x66\xef");                         // [0x503a] out     dx, ax
+        emit(ram, "\x66\x42");                         // [0x503c] inc     dx
+        emit(ram, "\xed");                             // [0x503e] in     eax, dx
+        emit(ram, "\x66\x42");                         // [0x503f] inc     dx
+        emit(ram, "\x83\xf0\xff");                     // [0x5041] xor    eax, 0xffffffff
+        emit(ram, "\xef");                             // [0x5044] out     dx, eax
+
+		// -------------------------------
+
 		// Basic MMIO
-		emit(ram, "\xbf\x00\x00\x00\xe0");             // [0x5026] mov    edi, 0xe0000000
-		emit(ram, "\x8b\x1f");                         // [0x502b] mov    ebx, [edi]
-		emit(ram, "\x83\xc7\x04");                     // [0x502d] add    edi, 4
-		emit(ram, "\x89\x1f");                         // [0x5030] mov    [edi], ebx
+		emit(ram, "\xbf\x00\x00\x00\xe0");             // [0x5045] mov    edi, 0xe0000000
+		emit(ram, "\x8b\x1f");                         // [0x504a] mov    ebx, [edi]
+		emit(ram, "\x83\xc7\x04");                     // [0x504c] add    edi, 4
+		emit(ram, "\x89\x1f");                         // [0x504f] mov    [edi], ebx
 
 		// Advanced MMIO
-		emit(ram, "\xb9\x00\x00\x00\x10");             // [0x5032] mov    ecx, 0x10000000
-		emit(ram, "\x85\x0f");                         // [0x5037] test   [edi], ecx
-
-		// End
-		emit(ram, "\xf4");                             // [0x5039] hlt
+		emit(ram, "\xb9\x00\x00\x00\x10");             // [0x5051] mov    ecx, 0x10000000
+		emit(ram, "\x85\x0f");                         // [0x5056] test   [edi], ecx
+		
+        // -------------------------------
+    
+        // End
+		emit(ram, "\xf4");                             // [0x5058] hlt
 
 		// -------------------------------
 
@@ -747,6 +770,223 @@ int main() {
 	printRegs(&regs);
 	//printFPURegs(&fpu);
 	printf("\n");
+    
+	// ----- PMIO -------------------------------------------------------------------------------------------------------------
+
+	printf("Testing PMIO\n\n");
+
+	// Run CPU until 8-bit IN
+	vcpu->Run();
+
+	switch (tunnel->_exit_status) {
+    case HAX_EXIT_IO: {
+		printf("Emulation exited due to PMIO as expected!\n");
+		if (tunnel->io._direction == HAX_IO_IN && tunnel->io._port == 0x1000 && tunnel->io._size == 1 && tunnel->io._count == 1) {
+			printf("And we got the right address and direction!\n");
+            *(uint8_t*)vcpu->IOTunnel() = 0xac;
+		}
+		break;
+	}
+	default:
+		printf("Emulation exited for another reason: %d\n", tunnel->_exit_status);
+		break;
+	}
+
+	// Refresh CPU registers
+	vcpuStatus = vcpu->GetRegisters(&regs);
+	switch (vcpuStatus) {
+	case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+	}
+
+	// Refresh FPU registers
+	vcpuStatus = vcpu->GetFPURegisters(&fpu);
+	switch (vcpuStatus) {
+	case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
+	}
+
+	printf("\nCPU register state:\n");
+	printRegs(&regs);
+	//printFPURegs(&fpu);
+	printf("\n");
+
+    // Run CPU until 8-bit OUT
+    vcpu->Run();
+
+    switch (tunnel->_exit_status) {
+    case HAX_EXIT_IO: {
+        printf("Emulation exited due to PMIO as expected!\n");
+        if (tunnel->io._direction == HAX_IO_OUT && tunnel->io._port == 0x1001 && tunnel->io._size == 1 && tunnel->io._count == 1) {
+            printf("And we got the right address and direction!\n");
+            uint8_t val = *(uint8_t*)vcpu->IOTunnel();
+            if (val == 0x53) {
+                printf("And the right result too!\n");
+            }
+        }
+        break;
+    }
+    default:
+        printf("Emulation exited for another reason: %d\n", tunnel->_exit_status);
+        break;
+    }
+
+    // Refresh CPU registers
+    vcpuStatus = vcpu->GetRegisters(&regs);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    // Refresh FPU registers
+    vcpuStatus = vcpu->GetFPURegisters(&fpu);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    printf("\nCPU register state:\n");
+    printRegs(&regs);
+    //printFPURegs(&fpu);
+    printf("\n");
+
+    // Run CPU until 16-bit IN
+    vcpu->Run();
+
+    switch (tunnel->_exit_status) {
+    case HAX_EXIT_IO: {
+        printf("Emulation exited due to PMIO as expected!\n");
+        if (tunnel->io._direction == HAX_IO_IN && tunnel->io._port == 0x1002 && tunnel->io._size == 2 && tunnel->io._count == 1) {
+            printf("And we got the right address and direction!\n");
+            *(uint16_t*)vcpu->IOTunnel() = 0xfade;
+        }
+        break;
+    }
+    default:
+        printf("Emulation exited for another reason: %d\n", tunnel->_exit_status);
+        break;
+    }
+
+    // Refresh CPU registers
+    vcpuStatus = vcpu->GetRegisters(&regs);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    // Refresh FPU registers
+    vcpuStatus = vcpu->GetFPURegisters(&fpu);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    printf("\nCPU register state:\n");
+    printRegs(&regs);
+    //printFPURegs(&fpu);
+    printf("\n");
+
+    // Run CPU until 16-bit OUT
+    vcpu->Run();
+
+    switch (tunnel->_exit_status) {
+    case HAX_EXIT_IO: {
+        printf("Emulation exited due to PMIO as expected!\n");
+        if (tunnel->io._direction == HAX_IO_OUT && tunnel->io._port == 0x1003 && tunnel->io._size == 2 && tunnel->io._count == 1) {
+            printf("And we got the right address and direction!\n");
+            uint16_t val = *(uint16_t*)vcpu->IOTunnel();
+            if (val == 0x0521) {
+                printf("And the right result too!\n");
+            }
+        }
+        break;
+    }
+    default:
+        printf("Emulation exited for another reason: %d\n", tunnel->_exit_status);
+        break;
+    }
+
+    // Refresh CPU registers
+    vcpuStatus = vcpu->GetRegisters(&regs);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    // Refresh FPU registers
+    vcpuStatus = vcpu->GetFPURegisters(&fpu);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    printf("\nCPU register state:\n");
+    printRegs(&regs);
+    //printFPURegs(&fpu);
+    printf("\n");
+
+    // Run CPU until 32-bit IN
+    vcpu->Run();
+
+    switch (tunnel->_exit_status) {
+    case HAX_EXIT_IO: {
+        printf("Emulation exited due to PMIO as expected!\n");
+        if (tunnel->io._direction == HAX_IO_IN && tunnel->io._port == 0x1004 && tunnel->io._size == 4 && tunnel->io._count == 1) {
+            printf("And we got the right address and direction!\n");
+            *(uint32_t*)vcpu->IOTunnel() = 0xfeedbabe;
+        }
+        break;
+    }
+    default:
+        printf("Emulation exited for another reason: %d\n", tunnel->_exit_status);
+        break;
+    }
+
+    // Refresh CPU registers
+    vcpuStatus = vcpu->GetRegisters(&regs);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    // Refresh FPU registers
+    vcpuStatus = vcpu->GetFPURegisters(&fpu);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    printf("\nCPU register state:\n");
+    printRegs(&regs);
+    //printFPURegs(&fpu);
+    printf("\n");
+
+    // Run CPU until 8-bit OUT
+    vcpu->Run();
+
+    switch (tunnel->_exit_status) {
+    case HAX_EXIT_IO: {
+        printf("Emulation exited due to PMIO as expected!\n");
+        if (tunnel->io._direction == HAX_IO_OUT && tunnel->io._port == 0x1005 && tunnel->io._size == 4 && tunnel->io._count == 1) {
+            printf("And we got the right address and direction!\n");
+            uint32_t val = *(uint32_t*)vcpu->IOTunnel();
+            if (val == 0x01124541) {
+                printf("And the right result too!\n");
+            }
+        }
+        break;
+    }
+    default:
+        printf("Emulation exited for another reason: %d\n", tunnel->_exit_status);
+        break;
+    }
+
+    // Refresh CPU registers
+    vcpuStatus = vcpu->GetRegisters(&regs);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    // Refresh FPU registers
+    vcpuStatus = vcpu->GetFPURegisters(&fpu);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    printf("\nCPU register state:\n");
+    printRegs(&regs);
+    //printFPURegs(&fpu);
+    printf("\n");
 
 	// ----- MMIO -------------------------------------------------------------------------------------------------------------
 
@@ -880,7 +1120,7 @@ int main() {
 	switch (vcpuStatus) {
 	case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
 	}
-
+    
 	printf("\nFinal CPU register state:\n");
 	printRegs(&regs);
 	//printFPURegs(&fpu);

@@ -183,8 +183,6 @@ struct hax_tunnel {
 
     union {
         struct {
-			#define HAX_EXIT_IO_IN  1
-			#define HAX_EXIT_IO_OUT 0
 			uint8_t _direction;
             uint8_t _df;
             uint16_t _size;
