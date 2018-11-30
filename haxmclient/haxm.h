@@ -147,6 +147,8 @@ public:
 
 	HaxmVCPUStatus Interrupt(uint8_t vector);
 
+    HaxmVCPUStatus EnableSoftwareBreakpoints(bool enable);
+
     HaxmVCPUStatus SetHardwareBreakpoints(HaxmHardwareBreakpoint breakpoints[4]);
     HaxmVCPUStatus ClearHardwareBreakpoints();
 

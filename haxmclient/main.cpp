@@ -1354,10 +1354,16 @@ int main() {
     printf("\n");
 
     // ----- Software breakpoints ---------------------------------------------------------------------------------------------
-    /*
-    // Place software breakpoint
-    // TODO: implement, place at 0x10000071
-
+    
+    // Enable software breakpoints and place a breakpoint
+    vcpuStatus = vcpu->EnableSoftwareBreakpoints(true);
+    if (vcpuStatus != HXVCPUS_SUCCESS) {
+        printf("Failed to enable software breakpoints: %d\n", vcpu->GetLastError());
+        return -1;
+    }
+    uint8_t swBpBackup = ram[0x5071];
+    ram[0x5071] = 0xCC;
+    
     // Run CPU. Should hit the breakpoint
     vcpu->Run();
 
@@ -1375,7 +1381,7 @@ int main() {
 
     switch (tunnel->_exit_status) {
     case HAX_EXIT_DEBUG: {
-        printf("Emulation exited due to breakpoint as expected!\n");
+        printf("Emulation exited due to software breakpoint as expected!\n");
         if (tunnel->debug.rip == 0x10000071) {
             printf("And triggered the correct breakpoint!\n");
         }
@@ -1398,29 +1404,14 @@ int main() {
     //printFPURegs(&fpu);
     printf("\n");
 
-    // Clear software breakpoints
-    // TODO: implement
-
-    // Run CPU. Should continue to the end
-    vcpu->Run();
-
-    // Refresh CPU registers
-    vcpuStatus = vcpu->GetRegisters(&regs);
-    switch (vcpuStatus) {
-    case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+    // Disable software breakpoints and revert instruction
+    vcpuStatus = vcpu->EnableSoftwareBreakpoints(false);
+    if (vcpuStatus != HXVCPUS_SUCCESS) {
+        printf("Failed to disable software breakpoints: %d\n", vcpu->GetLastError());
+        return -1;
     }
+    ram[0x5071] = swBpBackup;
 
-    // Refresh FPU registers
-    vcpuStatus = vcpu->GetFPURegisters(&fpu);
-    switch (vcpuStatus) {
-    case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
-    }
-
-    printf("\nCPU register state:\n");
-    printRegs(&regs);
-    //printFPURegs(&fpu);
-    printf("\n");
-    */
     // ----- Hardware breakpoints ---------------------------------------------------------------------------------------------
 
     // Place hardware breakpoint
@@ -1453,7 +1444,7 @@ int main() {
 
     switch (tunnel->_exit_status) {
     case HAX_EXIT_DEBUG: {
-        printf("Emulation exited due to breakpoint as expected!\n");
+        printf("Emulation exited due to hardware breakpoint as expected!\n");
         if (tunnel->debug.dr6 == 1) {
             printf("And triggered the correct breakpoint!\n");
         }

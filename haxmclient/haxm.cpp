@@ -569,6 +569,22 @@ HaxmVCPUStatus HaxmVCPU::Step() {
     return HXVCPUS_SUCCESS;
 }
 
+HaxmVCPUStatus HaxmVCPU::EnableSoftwareBreakpoints(bool enable) {
+    if (enable) {
+        m_debug.control |= HAX_DEBUG_USE_SW_BP;
+    }
+    else {
+        m_debug.control &= ~HAX_DEBUG_USE_SW_BP;
+    }
+
+    if (!SetDebug()) {
+        m_lastError = GetLastError();
+        return HXVCPUS_FAILED;
+    }
+
+    return HXVCPUS_SUCCESS;
+}
+
 HaxmVCPUStatus HaxmVCPU::SetHardwareBreakpoints(HaxmHardwareBreakpoint breakpoints[4]) {
     bool anyEnabled = false;
     for (int i = 0; i < 4; i++) {
