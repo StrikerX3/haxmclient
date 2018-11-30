@@ -27,12 +27,15 @@ enum HaxmVMStatus {
 };
 
 enum HaxmVCPUStatus {
-	HXVCPUS_SUCCESS = 0,          // VCPU created successfully or the operation completed without errors
+	HXVCPUS_SUCCESS = 0,             // VCPU created successfully or the operation completed without errors
 
-	HXVCPUS_FAILED = 0xa0000000,  // The operation failed
+	HXVCPUS_FAILED = 0xa0000000,     // The operation failed
+    HXVCPUS_INVALID_PARAMETER,       // An invalid parameter was passed
 
-	HXVCPUS_CREATE_FAILED,        // Failed to create VCPU
-	HXVCPUS_TUNNEL_SETUP_FAILED,  // Failed to setup VCPU tunnel
+	HXVCPUS_CREATE_FAILED,           // Failed to create VCPU
+	HXVCPUS_TUNNEL_SETUP_FAILED,     // Failed to setup VCPU tunnel
+    
+    HXVCPUS_SINGLE_STEP_FAILED,      // Failed to setup single stepping
 };
 
 enum HaxmVMMemoryType {
@@ -42,6 +45,28 @@ enum HaxmVMMemoryType {
 
 class HaxmVM;
 class HaxmVCPU;
+
+enum HaxmHardwareBreakpointTrigger {
+    HXBPT_EXECUTION = 0,
+    HXBPT_DATA_WRITE,
+    HXBPT_8_BYTE_WIDE,
+    HXBPT_DATA_READ_WRITE,
+};
+
+enum HaxmHardwareBreakpointLength {
+    HXBPL_1_BYTE = 0,
+    HXBPL_2_BYTE,
+    HXBPL_8_BYTE,
+    HXBPL_4_BYTE,
+};
+
+struct HaxmHardwareBreakpoint {
+    uint64_t address;
+    bool localEnable;
+    bool globalEnable;
+    HaxmHardwareBreakpointTrigger trigger;
+    HaxmHardwareBreakpointLength length;
+};
 
 class Haxm {
 public:
@@ -117,9 +142,13 @@ public:
 	HaxmVCPUStatus GetMSRs(struct hax_msr_data *msrData);
 	HaxmVCPUStatus SetMSRs(struct hax_msr_data *msrData);
 
-	HaxmVCPUStatus Run();
+    HaxmVCPUStatus Run();
+    HaxmVCPUStatus Step();
 
 	HaxmVCPUStatus Interrupt(uint8_t vector);
+
+    HaxmVCPUStatus SetHardwareBreakpoints(HaxmHardwareBreakpoint breakpoints[4]);
+    HaxmVCPUStatus ClearHardwareBreakpoints();
 
 	HaxmVCPUStatus Close();
 
@@ -135,9 +164,11 @@ private:
 	~HaxmVCPU();
 
 	HaxmVCPUStatus Initialize();
+    BOOLEAN SetDebug();
 
 	struct hax_tunnel *m_tunnel;
 	unsigned char *m_ioTunnel;
+    struct hax_debug_t m_debug;
 
 	uint32_t m_vcpuID;
 	HANDLE m_hVCPU;

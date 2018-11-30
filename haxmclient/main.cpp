@@ -291,9 +291,26 @@ int main() {
 		emit(ram, "\x85\x0f");                         // [0x5056] test   [edi], ecx
 		
         // -------------------------------
-    
+
+        // Test single stepping
+        emit(ram, "\xb9\x11\x00\x00\x00");             // [0x5058] mov    ecx, 0x11
+        emit(ram, "\xb9\x00\x22\x00\x00");             // [0x505d] mov    ecx, 0x2200
+        emit(ram, "\xb9\x00\x00\x33\x00");             // [0x5062] mov    ecx, 0x330000
+        emit(ram, "\xb9\x00\x00\x00\x44");             // [0x5067] mov    ecx, 0x44000000
+
+        // -------------------------------
+
+        // Test software and hardware breakpoints
+        emit(ram, "\xb9\xff\x00\x00\x00");             // [0x506c] mov    ecx, 0xff
+        emit(ram, "\xb9\x00\xee\x00\x00");             // [0x5071] mov    ecx, 0xee00
+        emit(ram, "\xb9\x00\x00\xdd\x00");             // [0x5076] mov    ecx, 0xdd0000
+        emit(ram, "\xb9\x00\x00\x00\xcc");             // [0x507b] mov    ecx, 0xcc000000
+        emit(ram, "\xb9\xff\xee\xdd\xcc");             // [0x5080] mov    ecx, 0xccddeeff
+
+        // -------------------------------
+
         // End
-		emit(ram, "\xf4");                             // [0x5058] hlt
+		emit(ram, "\xf4");                             // [0x5085] hlt
 
 		// -------------------------------
 
@@ -352,7 +369,16 @@ int main() {
 		if ((caps->wstatus & HAX_CAP_MEMQUOTA) && caps->mem_quota != 0) {
 			printf("    Global memory quota enabled: %lld MB available\n", caps->mem_quota);
 		}
-	}
+        if (caps->winfo & HAX_CAP_TUNNEL_PAGE) {
+            printf("  Tunnel is allocated on a full page\n");
+        }
+        if (caps->winfo & HAX_CAP_RAM_PROTECTION) {
+            printf("  Guest RAM protection\n");
+        }
+        if (caps->winfo & HAX_CAP_DEBUG) {
+            printf("  Guest debugging\n");
+        }
+    }
 	else {
 		printf("  HAXM cannot be used on this host\n");
 		if (caps->winfo & HAX_CAP_FAILREASON_VT) {
@@ -1077,7 +1103,7 @@ int main() {
 	//printFPURegs(&fpu);
 	printf("\n");
 
-	// Will now hit the TEST instruction with MMIO address
+	// Will now hit the first part of TEST instruction with MMIO address
 	vcpu->Run();
 
 	switch (tunnel->_exit_status) {
@@ -1120,8 +1146,363 @@ int main() {
 	switch (vcpuStatus) {
 	case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
 	}
+
+    printf("\nCPU register state:\n");
+    printRegs(&regs);
+    //printFPURegs(&fpu);
+    printf("\n");
+
+    // Will now hit the second part of TEST instruction with MMIO address
+    vcpu->Run();
+
+    switch (tunnel->_exit_status) {
+    case HAX_EXIT_FAST_MMIO: {
+        printf("Emulation exited due to fast MMIO as expected!\n");
+        hax_fastmmio *mmio = (hax_fastmmio*)vcpu->IOTunnel();
+        if (mmio->direction == HAX_IO_OUT && mmio->gpa == 0xe0000004, mmio->value == 0xbaadc0de) {
+            printf("And we got the right address, direction and value!\n");
+        }
+        break;
+    }
+    case HAX_EXIT_MMIO: {
+        // TODO: direction? value?
+        printf("Emulation exited due to MMIO as expected!\n");
+        if (tunnel->mmio.gla == 0xe0000000) {
+            printf("And we got the right address!\n");
+        }
+        break;
+    }
+    case HAX_EXIT_STATECHANGE: {
+        // https://github.com/intel/haxm/issues/12
+        // haxm_panic:Unexpected MMIO instruction (opcode=0x85, exit_instr_length=2, num=0, gpa=0xe0000004, instr[0..5]=0x85 0xf 0xf4 0x0 0x0 0x0)
+        printf("Emulation exited due to a HAXM bug; exit_reason = 0x%x\n", tunnel->_exit_reason);
+        printf("Kernel debug log will probably mention Unexpected MMIO instruction\n");
+        break;
+    }
+    default:
+        printf("Emulation exited for another reason: %d\n", tunnel->_exit_status);
+        break;
+    }
+
+    // Refresh CPU registers
+    vcpuStatus = vcpu->GetRegisters(&regs);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    // Refresh FPU registers
+    vcpuStatus = vcpu->GetFPURegisters(&fpu);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    printf("\nCPU register state:\n");
+    printRegs(&regs);
+    //printFPURegs(&fpu);
+    printf("\n");
+
+    // ----- Single stepping --------------------------------------------------------------------------------------------------
+
+    printf("Testing single stepping\n\n");
+
+    // Step CPU
+    vcpu->Step();
+
+    // Refresh CPU registers
+    vcpuStatus = vcpu->GetRegisters(&regs);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    // Refresh FPU registers
+    vcpuStatus = vcpu->GetFPURegisters(&fpu);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    switch (tunnel->_exit_status) {
+    case HAX_EXIT_DEBUG: {
+        printf("Emulation exited due to single stepping as expected!\n");
+        if (tunnel->debug.rip == 0x1000005d) {
+            printf("And stopped at the right place!\n");
+        }
+        if (regs._ecx == 0x11) {
+            printf("And got the right result!\n");
+        }
+        printf("DR6 = %08x  DR7 = %08x\n", tunnel->debug.dr6, tunnel->debug.dr7);
+        break;
+    }
+    default:
+        printf("Emulation exited for another reason: %d\n", tunnel->_exit_status);
+        break;
+    }
+
+    printf("\nCPU register state:\n");
+    printRegs(&regs);
+    //printFPURegs(&fpu);
+    printf("\n");
+
+    // Step CPU
+    vcpu->Step();
+
+    // Refresh CPU registers
+    vcpuStatus = vcpu->GetRegisters(&regs);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    // Refresh FPU registers
+    vcpuStatus = vcpu->GetFPURegisters(&fpu);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    switch (tunnel->_exit_status) {
+    case HAX_EXIT_DEBUG: {
+        printf("Emulation exited due to single stepping as expected!\n");
+        if (tunnel->debug.rip == 0x10000062) {
+            printf("And stopped at the right place!\n");
+        }
+        if (regs._ecx == 0x2200) {
+            printf("And got the right result!\n");
+        }
+        printf("DR6 = %08x  DR7 = %08x\n", tunnel->debug.dr6, tunnel->debug.dr7);
+        break;
+    }
+    default:
+        printf("Emulation exited for another reason: %d\n", tunnel->_exit_status);
+        break;
+    }
+
+    printf("\nCPU register state:\n");
+    printRegs(&regs);
+    //printFPURegs(&fpu);
+    printf("\n");
+
+    // Step CPU
+    vcpu->Step();
+
+    // Refresh CPU registers
+    vcpuStatus = vcpu->GetRegisters(&regs);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    // Refresh FPU registers
+    vcpuStatus = vcpu->GetFPURegisters(&fpu);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    switch (tunnel->_exit_status) {
+    case HAX_EXIT_DEBUG: {
+        printf("Emulation exited due to single stepping as expected!\n");
+        if (tunnel->debug.rip == 0x10000067) {
+            printf("And stopped at the right place!\n");
+        }
+        if (regs._ecx == 0x330000) {
+            printf("And got the right result!\n");
+        }
+        printf("DR6 = %08x  DR7 = %08x\n", tunnel->debug.dr6, tunnel->debug.dr7);
+        break;
+    }
+    default:
+        printf("Emulation exited for another reason: %d\n", tunnel->_exit_status);
+        break;
+    }
+
+    printf("\nCPU register state:\n");
+    printRegs(&regs);
+    //printFPURegs(&fpu);
+    printf("\n");
+
+    // Step CPU
+    vcpu->Step();
+
+    // Refresh CPU registers
+    vcpuStatus = vcpu->GetRegisters(&regs);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    // Refresh FPU registers
+    vcpuStatus = vcpu->GetFPURegisters(&fpu);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    switch (tunnel->_exit_status) {
+    case HAX_EXIT_DEBUG: {
+        printf("Emulation exited due to single stepping as expected!\n");
+        if (tunnel->debug.rip == 0x1000006c) {
+            printf("And stopped at the right place!\n");
+        }
+        if (regs._ecx == 0x44000000) {
+            printf("And got the right result!\n");
+        }
+        printf("DR6 = %08x  DR7 = %08x\n", tunnel->debug.dr6, tunnel->debug.dr7);
+        break;
+    }
+    default:
+        printf("Emulation exited for another reason: %d\n", tunnel->_exit_status);
+        break;
+    }
+
+    printf("\nCPU register state:\n");
+    printRegs(&regs);
+    //printFPURegs(&fpu);
+    printf("\n");
+
+    // ----- Software breakpoints ---------------------------------------------------------------------------------------------
+    /*
+    // Place software breakpoint
+    // TODO: implement, place at 0x10000071
+
+    // Run CPU. Should hit the breakpoint
+    vcpu->Run();
+
+    // Refresh CPU registers
+    vcpuStatus = vcpu->GetRegisters(&regs);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    // Refresh FPU registers
+    vcpuStatus = vcpu->GetFPURegisters(&fpu);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    switch (tunnel->_exit_status) {
+    case HAX_EXIT_DEBUG: {
+        printf("Emulation exited due to breakpoint as expected!\n");
+        if (tunnel->debug.rip == 0x10000071) {
+            printf("And triggered the correct breakpoint!\n");
+        }
+        if (regs._eip == 0x10000071) {
+            printf("And stopped at the right place!\n");
+        }
+        if (regs._ecx == 0x000000ff) {
+            printf("And got the right result!\n");
+        }
+        printf("DR6 = %08x  DR7 = %08x\n", tunnel->debug.dr6, tunnel->debug.dr7);
+        break;
+    }
+    default:
+        printf("Emulation exited for another reason: %d\n", tunnel->_exit_status);
+        break;
+    }
+
+    printf("\nCPU register state:\n");
+    printRegs(&regs);
+    //printFPURegs(&fpu);
+    printf("\n");
+
+    // Clear software breakpoints
+    // TODO: implement
+
+    // Run CPU. Should continue to the end
+    vcpu->Run();
+
+    // Refresh CPU registers
+    vcpuStatus = vcpu->GetRegisters(&regs);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    // Refresh FPU registers
+    vcpuStatus = vcpu->GetFPURegisters(&fpu);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    printf("\nCPU register state:\n");
+    printRegs(&regs);
+    //printFPURegs(&fpu);
+    printf("\n");
+    */
+    // ----- Hardware breakpoints ---------------------------------------------------------------------------------------------
+
+    // Place hardware breakpoint
+    HaxmHardwareBreakpoint bps[4] = { 0 };
+    bps[0].address = 0x1000007b;
+    bps[0].localEnable = true;
+    bps[0].globalEnable = false;
+    bps[0].trigger = HXBPT_EXECUTION;
+    bps[0].length = HXBPL_1_BYTE;
+    vcpuStatus = vcpu->SetHardwareBreakpoints(bps);
+    if (vcpuStatus != HXVCPUS_SUCCESS) {
+        printf("Failed to set hardware breakpoint: %d\n", vcpu->GetLastError());
+        return -1;
+    }
+
+    // Run CPU. Should hit the breakpoint
+    vcpu->Run();
+
+    // Refresh CPU registers
+    vcpuStatus = vcpu->GetRegisters(&regs);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    // Refresh FPU registers
+    vcpuStatus = vcpu->GetFPURegisters(&fpu);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    switch (tunnel->_exit_status) {
+    case HAX_EXIT_DEBUG: {
+        printf("Emulation exited due to breakpoint as expected!\n");
+        if (tunnel->debug.dr6 == 1) {
+            printf("And triggered the correct breakpoint!\n");
+        }
+        if (regs._eip == 0x1000007b) {
+            printf("And stopped at the right place!\n");
+        }
+        if (regs._ecx == 0x00dd0000) {
+            printf("And got the right result!\n");
+        }
+        printf("DR6 = %08x  DR7 = %08x\n", tunnel->debug.dr6, tunnel->debug.dr7);
+        break;
+    }
+    default:
+        printf("Emulation exited for another reason: %d\n", tunnel->_exit_status);
+        break;
+    }
+
+    printf("\nCPU register state:\n");
+    printRegs(&regs);
+    //printFPURegs(&fpu);
+    printf("\n");
+
+    // Clear hardware breakpoints
+    vcpu->ClearHardwareBreakpoints();
+    printf("Hardware breakpoints cleared\n");
+
+    // Run CPU. Should continue to the end
+    vcpu->Run();
+
+    // Refresh CPU registers
+    vcpuStatus = vcpu->GetRegisters(&regs);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    // Refresh FPU registers
+    vcpuStatus = vcpu->GetFPURegisters(&fpu);
+    switch (vcpuStatus) {
+    case HXVCPUS_FAILED: printf("Failed to get VCPU floating point registers: %d\n", vcpu->GetLastError()); return -1;
+    }
+
+    printf("\nCPU register state:\n");
+    printRegs(&regs);
+    //printFPURegs(&fpu);
+    printf("\n");
+
+    // ----- End --------------------------------------------------------------------------------------------------------------
     
-	printf("\nFinal CPU register state:\n");
+    printf("\nFinal CPU register state:\n");
 	printRegs(&regs);
 	//printFPURegs(&fpu);
 

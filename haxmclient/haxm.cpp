@@ -369,6 +369,7 @@ HaxmVCPU::HaxmVCPU(HaxmVM& vm, uint32_t id)
 	, m_hVCPU(INVALID_HANDLE_VALUE)
 	, m_lastError(ERROR_SUCCESS)
 {
+    m_debug = { 0 };
 }
 
 HaxmVCPU::~HaxmVCPU() {
@@ -546,6 +547,68 @@ HaxmVCPUStatus HaxmVCPU::Run() {
 	return HXVCPUS_SUCCESS;
 }
 
+HaxmVCPUStatus HaxmVCPU::Step() {
+    m_debug.control |= HAX_DEBUG_STEP;
+    if (!SetDebug()) {
+        m_lastError = GetLastError();
+        return HXVCPUS_SINGLE_STEP_FAILED;
+    }
+
+    HaxmVCPUStatus status = Run();
+
+    m_debug.control &= ~HAX_DEBUG_STEP;
+    if (!SetDebug()) {
+        m_lastError = GetLastError();
+        return HXVCPUS_SINGLE_STEP_FAILED;
+    }
+
+    if (status != HXVCPUS_SUCCESS) {
+        return status;
+    }
+
+    return HXVCPUS_SUCCESS;
+}
+
+HaxmVCPUStatus HaxmVCPU::SetHardwareBreakpoints(HaxmHardwareBreakpoint breakpoints[4]) {
+    bool anyEnabled = false;
+    for (int i = 0; i < 4; i++) {
+        if (breakpoints[i].localEnable || breakpoints[i].globalEnable) {
+            anyEnabled = true;
+            break;
+        }
+    }
+    if (!anyEnabled) {
+        return ClearHardwareBreakpoints();
+    }
+
+    m_debug.control |= HAX_DEBUG_USE_HW_BP;
+    for (int i = 0; i < 4; i++) {
+        m_debug.dr[i] = breakpoints[i].address;
+        m_debug.dr[7] |= (breakpoints[i].localEnable ? 1 : 0) << (0 + i * 2);
+        m_debug.dr[7] |= (breakpoints[i].globalEnable ? 1 : 0) << (1 + i * 2);
+        m_debug.dr[7] |= (breakpoints[i].trigger & 0x3) << (16 + i * 4);
+        m_debug.dr[7] |= (breakpoints[i].length & 0x3) << (18 + i * 4);
+    }
+
+    if (!SetDebug()) {
+        m_lastError = GetLastError();
+        return HXVCPUS_FAILED;
+    }
+
+    return HXVCPUS_SUCCESS;
+}
+
+HaxmVCPUStatus HaxmVCPU::ClearHardwareBreakpoints() {
+    m_debug.control &= ~HAX_DEBUG_USE_HW_BP;
+    memset(m_debug.dr, 0, 8 * sizeof(uint64_t));
+    if (!SetDebug()) {
+        m_lastError = GetLastError();
+        return HXVCPUS_FAILED;
+    }
+
+    return HXVCPUS_SUCCESS;
+}
+
 HaxmVCPUStatus HaxmVCPU::Interrupt(uint8_t vector) {
 	DWORD returnSize;
 	BOOLEAN bResult;
@@ -572,4 +635,23 @@ HaxmVCPUStatus HaxmVCPU::Close() {
 	}
 
 	return HXVCPUS_SUCCESS;
+}
+
+BOOLEAN HaxmVCPU::SetDebug() {
+    DWORD returnSize;
+
+    bool enable = m_debug.control & ~HAX_DEBUG_ENABLE;
+    if (enable) {
+        m_debug.control |= HAX_DEBUG_ENABLE;
+    }
+    else {
+        m_debug.control &= ~HAX_DEBUG_ENABLE;
+    }
+
+    return DeviceIoControl(m_hVCPU,
+        HAX_IOCTL_VCPU_DEBUG,
+        &m_debug, sizeof(m_debug),
+        NULL, 0,
+        &returnSize,
+        (LPOVERLAPPED)NULL);
 }
